@@ -2,17 +2,15 @@ import streamlit as st
 import requests
 import pandas as pd
 
-# Load API key from Streamlit secrets
 API_KEY = st.secrets["ALPHA_VANTAGE_API_KEY"]
 BASE_URL = "https://www.alphavantage.co/query"
 
-# Friendly labels for readability
+# Friendly labels
 FRIENDLY_LABELS = {
     "PERatio": "P/E Ratio",
     "PEGRatio": "PEG Ratio",
     "PriceToBookRatio": "Price/Book",
     "PriceToSalesRatioTTM": "Price/Sales",
-    "EVToRevenue": "EV/Revenue",
     "EVToEBITDA": "EV/EBITDA",
     "EPS": "Earnings Per Share",
     "EBITDA": "EBITDA",
@@ -28,19 +26,18 @@ FRIENDLY_LABELS = {
     "DividendYield": "Dividend Yield"
 }
 
-# Grouped metric categories
-VALUATION_METRICS = ["PERatio", "PEGRatio", "PriceToBookRatio", "PriceToSalesRatioTTM", "EVToRevenue", "EVToEBITDA"]
+VALUATION_METRICS = ["PERatio", "PEGRatio", "PriceToBookRatio", "PriceToSalesRatioTTM", "EVToEBITDA"]
 EARNINGS_METRICS = ["EPS", "EBITDA", "ProfitMargin", "OperatingMarginTTM"]
 GROWTH_METRICS = ["QuarterlyEarningsGrowthYOY", "QuarterlyRevenueGrowthYOY", "ReturnOnAssetsTTM", "ReturnOnEquityTTM"]
 BOOK_DIVIDEND_METRICS = ["BookValue", "SharesOutstanding", "DividendPerShare", "DividendYield"]
 
-# ---------- Utilities ----------
-
 def parse_float(value):
+    if value is None:
+        return None
     try:
-        cleaned = str(value).replace(",", "")
+        cleaned = str(value).replace(",", "").strip()
         val = float(cleaned)
-        return val if val > 0 else None
+        return val if val != 0 else None
     except:
         return None
 
@@ -57,7 +54,6 @@ def fetch_company_overview(symbol):
             return data if "Symbol" in data else None
     except:
         return None
-    return None
 
 @st.cache_data(show_spinner=False)
 def fetch_cash_flow(symbol):
@@ -102,28 +98,23 @@ def display_table(title, metric_list, data):
     """
     st.markdown(html_table, unsafe_allow_html=True)
 
-# ---------- DCF Logic ----------
-
 def calculate_dcf(fcf_values, shares_outstanding, discount_rate=0.10, terminal_growth=0.025, years=5):
     if len(fcf_values) < 2 or shares_outstanding == 0 or fcf_values[0] == 0:
         return "N/A"
-
     fcf_values = fcf_values[::-1]
     try:
         fcf_cagr = max(((fcf_values[-1] / fcf_values[0]) ** (1 / (len(fcf_values)-1))) - 1, 0.05)
     except:
         fcf_cagr = 0.10
-
     last_fcf = fcf_values[-1]
     future_fcfs = [last_fcf * ((1 + fcf_cagr) ** t) / ((1 + discount_rate) ** t) for t in range(1, years + 1)]
     terminal_value = (future_fcfs[-1] * (1 + terminal_growth)) / (discount_rate - terminal_growth)
     terminal_discounted = terminal_value / ((1 + discount_rate) ** years)
-
     firm_value = sum(future_fcfs) + terminal_discounted
     fair_value_per_share = firm_value / shares_outstanding
     return round(fair_value_per_share, 2)
 
-# ---------- Streamlit App ----------
+# ---------- Streamlit UI ----------
 
 st.set_page_config(page_title="Stock Valuation Dashboard", layout="wide")
 st.title("📊 Stock Valuation Dashboard")
@@ -137,25 +128,8 @@ if symbol:
     if overview:
         st.success(f"Company Overview for **{symbol.upper()}**")
 
-        display_table("💰 Valuation Multiples", VALUATION_METRICS, overview)
-        display_table("📈 Earnings & Profitability", EARNINGS_METRICS, overview)
-        display_table("📊 Growth Metrics", GROWTH_METRICS, overview)
-        display_table("📚 Book & Dividends", BOOK_DIVIDEND_METRICS, overview)
-
-        # EV/Revenue
-        ev = parse_float(overview.get("EnterpriseValue"))
-        revenue = parse_float(overview.get("RevenueTTM"))
-
-        if ev is None or revenue is None:
-            st.warning("⚠️ Enterprise Value or Revenue is missing or invalid.")
-            st.metric(label="🔹 EV / Revenue", value="N/A")
-        else:
-            ev_to_rev = round(ev / revenue, 2)
-            st.metric(label="🔹 EV / Revenue", value=ev_to_rev)
-
-        # DCF Calculation
+        # ---------- DCF Section (Moved to Top) ----------
         st.subheader("📉 Discounted Cash Flow (DCF) Valuation")
-
         try:
             annual_reports = cashflow["annualReports"]
             fcfs = []
@@ -172,6 +146,13 @@ if symbol:
             st.metric(label="📈 DCF Estimated Fair Value (per share)", value=dcf_value)
         except Exception as e:
             st.warning("⚠️ DCF calculation failed due to missing or malformed data.")
+
+        # ---------- Metrics Display ----------
+        display_table("💰 Valuation Multiples", VALUATION_METRICS, overview)
+        display_table("📈 Earnings & Profitability", EARNINGS_METRICS, overview)
+        display_table("📊 Growth Metrics", GROWTH_METRICS, overview)
+        display_table("📚 Book & Dividends", BOOK_DIVIDEND_METRICS, overview)
+
     else:
         st.error("No data found for that ticker. Please try another.")
 
